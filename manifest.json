@@ -1,0 +1,9 @@
+{
+  "name": "Car Knockout Online",
+  "short_name": "Car Knockout",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#0d141d",
+  "theme_color": "#1876ff",
+  "icons": []
+}

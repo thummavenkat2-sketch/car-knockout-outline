@@ -1,0 +1,157 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+<title>Car Knockout Online</title>
+<link rel="manifest" href="/manifest.json">
+<style>
+*{box-sizing:border-box}html,body{margin:0;height:100%;overflow:hidden;background:#05070a;color:#fff;font-family:system-ui,Arial}
+#game{width:100vw;height:100vh;display:block}
+#hud{position:fixed;inset:0;pointer-events:none}
+.top{display:flex;justify-content:space-between;padding:12px;gap:8px}.card{background:#0009;border:1px solid #ffffff25;border-radius:12px;padding:8px 11px;backdrop-filter:blur(8px)}
+#speed{font-size:22px;font-weight:900}#room{font-weight:900;letter-spacing:2px}
+#msg{position:absolute;top:67px;left:50%;transform:translateX(-50%);background:#000c;border-radius:12px;padding:9px 17px;text-align:center;white-space:nowrap}
+#damageWrap{position:absolute;top:112px;left:50%;transform:translateX(-50%);width:170px;background:#0009;border-radius:20px;padding:4px}.damage{height:8px;border-radius:10px;background:#27d46b;width:100%}
+#join{position:fixed;inset:0;display:grid;place-items:center;background:radial-gradient(circle,#293b55,#05070a);z-index:5}.panel{width:min(440px,90vw);background:#111827ee;border:1px solid #ffffff22;border-radius:20px;padding:25px;box-shadow:0 20px 80px #000}
+input,button{font:inherit;border:0;border-radius:12px;padding:13px 15px}input{width:100%;margin:8px 0;background:#273244;color:#fff;outline:1px solid #ffffff18}
+button{cursor:pointer;font-weight:800;background:#1e88ff;color:white}#joinBtn{width:100%;margin-top:8px}
+.controls{position:absolute;bottom:15px;left:15px;right:15px;display:flex;justify-content:space-between;align-items:end;pointer-events:auto}
+.pad{display:grid;grid-template-columns:62px 62px 62px;gap:7px}.pad button{height:55px;background:#ffffff18;color:white;border:1px solid #ffffff25;backdrop-filter:blur(7px)}
+.pedals{display:flex;gap:7px}.pedals button{height:72px;min-width:76px}
+#accel{background:#159b59}#brake{background:#d64d3b}#boost{background:#e5bd16;color:#111}
+#restart{position:absolute;top:52%;left:50%;transform:translate(-50%,-50%);display:none;pointer-events:auto}
+#count{position:absolute;left:50%;top:42%;transform:translate(-50%,-50%);font-size:min(18vw,120px);font-weight:1000;text-shadow:0 5px 20px #000;display:none}
+#mini{position:absolute;right:15px;bottom:150px;width:150px;height:85px;background:#0009;border:1px solid #ffffff22;border-radius:10px}
+.small{font-size:12px;color:#9ca3af}
+@media(max-width:650px){.top{font-size:12px}.card{padding:7px}.controls{bottom:10px}.pedals button{min-width:66px;height:65px}.pad{grid-template-columns:55px 55px 55px}.pad button{height:50px}}
+</style>
+</head>
+<body>
+<canvas id="game"></canvas>
+<div id="hud">
+ <div class="top">
+  <div class="card">🏎️ <b>CAR KNOCKOUT</b> <span id="speed">0 KM/H</span></div>
+  <div class="card">ROOM <span id="room">----</span> · ⚡ <span id="boosts">1</span></div>
+ </div>
+ <div id="msg">Enter a room code to play with a friend.</div>
+ <div id="damageWrap"><div class="damage" id="damage"></div></div>
+ <div id="count"></div>
+ <canvas id="mini" width="300" height="170"></canvas>
+ <div class="controls">
+  <div class="pad">
+   <span></span><button data-key="accel">▲</button><span></span>
+   <button data-key="left">◀</button><button data-key="brake">▼</button><button data-key="right">▶</button>
+  </div>
+  <div class="pedals"><button id="boost">⚡ NITRO</button><button id="brake">BRAKE</button><button id="accel">ACCEL</button></div>
+ </div>
+ <button id="restart">PLAY AGAIN</button>
+</div>
+<div id="join">
+ <div class="panel">
+  <h1>🏁 Car Knockout Online</h1>
+  <p>Two drivers. Two cockpits. One arena. Smash the other car into the KO zone.</p>
+  <input id="roomInput" maxlength="8" placeholder="ROOM CODE e.g. KART27">
+  <button id="joinBtn">JOIN / CREATE ROOM</button>
+  <p class="small">Use the same room code as your friend. The server synchronizes both cars in real time.</p>
+ </div>
+</div>
+<script src="/socket.io/socket.io.js"></script>
+<script type="module">
+import * as THREE from "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js";
+
+const canvas=document.querySelector("#game"), renderer=new THREE.WebGLRenderer({canvas,antialias:true});
+renderer.setPixelRatio(Math.min(devicePixelRatio,2));renderer.setSize(innerWidth,innerHeight);renderer.shadowMap.enabled=true;
+const scene=new THREE.Scene();scene.background=new THREE.Color(0x0d141d);scene.fog=new THREE.Fog(0x0d141d,30,100);
+const camera=new THREE.PerspectiveCamera(74,innerWidth/innerHeight,.08,160);scene.add(camera);
+
+scene.add(new THREE.HemisphereLight(0xaed9ff,0x201a12,2.1));
+const sun=new THREE.DirectionalLight(0xffffff,3.2);sun.position.set(-25,35,20);sun.castShadow=true;scene.add(sun);
+
+const road=new THREE.Mesh(new THREE.PlaneGeometry(90,52),new THREE.MeshStandardMaterial({color:0x30343a,roughness:.8}));
+road.rotation.x=-Math.PI/2;road.receiveShadow=true;scene.add(road);
+
+function cube(w,h,d,color,x,y,z,metal=0,rough=.5){
+ const m=new THREE.Mesh(new THREE.BoxGeometry(w,h,d),new THREE.MeshStandardMaterial({color,metalness:metal,roughness:rough}));
+ m.position.set(x,y,z);m.castShadow=true;m.receiveShadow=true;scene.add(m);return m;
+}
+cube(1.4,2.5,55,0x101216,-45,1.25,0);cube(1.4,2.5,55,0x101216,45,1.25,0);
+for(let x=-40;x<=40;x+=6) cube(.18,.03,.8,0xf0f0e0,x,.02,0);
+cube(1.3,2.5,4,0xc62828,-32,1.25,0);cube(1.3,2.5,4,0xc62828,32,1.25,0);
+
+function car(color){
+ const g=new THREE.Group();
+ const body=new THREE.Mesh(new THREE.BoxGeometry(2.9,.72,5.0),new THREE.MeshStandardMaterial({color,metalness:.65,roughness:.25}));
+ body.position.y=.72;body.castShadow=true;g.add(body);
+ const hood=new THREE.Mesh(new THREE.BoxGeometry(2.5,.28,1.35),new THREE.MeshStandardMaterial({color,metalness:.55,roughness:.22}));
+ hood.position.set(0,1.02,1.5);g.add(hood);
+ const cabin=new THREE.Mesh(new THREE.BoxGeometry(2.35,.72,2.15),new THREE.MeshStandardMaterial({color:0x122333,metalness:.1,roughness:.08,transparent:true,opacity:.9}));
+ cabin.position.set(0,1.23,-.35);g.add(cabin);
+ for(const x of [-1.48,1.48])for(const z of [-1.6,1.6]){
+  const w=new THREE.Mesh(new THREE.CylinderGeometry(.43,.43,.32,20),new THREE.MeshStandardMaterial({color:0x101010,roughness:.7}));
+  w.rotation.z=Math.PI/2;w.position.set(x,.43,z);g.add(w);
+ }
+ for(const x of [-.9,.9]){const lamp=new THREE.PointLight(0xcceeff,2.2,9);lamp.position.set(x,.9,2.65);g.add(lamp)}
+ const tail=new THREE.PointLight(0xff2222,1.2,5);tail.position.set(0,.8,-2.7);g.add(tail);
+ scene.add(g);return g;
+}
+const cars=[car(0x1876ff),car(0xe53935)];
+
+const dash=new THREE.Group();
+const dashMat=new THREE.MeshBasicMaterial({color:0x080a0c});
+const dashBody=new THREE.Mesh(new THREE.BoxGeometry(7.8,.7,1.7),dashMat);dashBody.position.set(0,-1.18,-1.9);dashBody.rotation.x=-.15;dash.add(dashBody);
+const wheel=new THREE.Mesh(new THREE.TorusGeometry(1.02,.13,14,32),new THREE.MeshBasicMaterial({color:0x101010}));
+wheel.position.set(0,-.42,-1.75);wheel.rotation.x=Math.PI/2;dash.add(wheel);
+camera.add(dash);
+
+let socket=io(), mySlot=0,state=null,roomCode="";
+let input={accel:false,brake:false,left:false,right:false}, countdownDone=false, audioCtx=null;
+const msg=document.querySelector("#msg"),join=document.querySelector("#join"),count=document.querySelector("#count");
+
+function beep(freq=500,dur=.08){
+ try{audioCtx ||= new AudioContext();const o=audioCtx.createOscillator(),g=audioCtx.createGain();o.frequency.value=freq;g.gain.value=.04;o.connect(g);g.connect(audioCtx.destination);o.start();o.stop(audioCtx.currentTime+dur)}catch{}
+}
+document.querySelector("#joinBtn").onclick=()=>{roomCode=document.querySelector("#roomInput").value.trim().toUpperCase();if(roomCode)socket.emit("joinRoom",roomCode)};
+socket.on("joined",d=>{mySlot=d.slot;roomCode=d.code;document.querySelector("#room").textContent=roomCode;join.style.display="none";msg.textContent=d.slot===0?"BLUE DRIVER · waiting for RED...":"RED DRIVER · waiting for BLUE..."});
+socket.on("errorMsg",t=>msg.textContent=t);
+socket.on("state",s=>{
+ state=s;
+ if(!s.started){msg.textContent="Waiting for the second driver...";return}
+ if(s.winner===null){
+  msg.textContent=`ROOM ${roomCode} · FIGHT!`;
+  if(!countdownDone){countdownDone=true;let n=3;count.style.display="block";count.textContent=n;beep(400,.1);
+   const t=setInterval(()=>{n--;if(n>0){count.textContent=n;beep(400+n*100,.1)}else{count.textContent="GO!";beep(900,.16);setTimeout(()=>count.style.display="none",450);clearInterval(t)}},700)}
+ }else{msg.textContent=`PLAYER ${s.winner+1} WINS! 🏆`;document.querySelector("#restart").style.display="block";beep(1000,.25)}
+ document.querySelector("#boosts").textContent=s.players.find(p=>p.slot===mySlot)?.boosts??0;
+});
+document.querySelector("#restart").onclick=()=>{socket.emit("restart");document.querySelector("#restart").style.display="none";countdownDone=false};
+function send(){socket.emit("input",input)}setInterval(send,40);
+
+function hold(el,key){const d=e=>{e.preventDefault();input[key]=true},u=e=>{e.preventDefault();input[key]=false};el.addEventListener("pointerdown",d);el.addEventListener("pointerup",u);el.addEventListener("pointerleave",u);el.addEventListener("pointercancel",u)}
+document.querySelectorAll("[data-key]").forEach(b=>hold(b,b.dataset.key));hold(document.querySelector("#accel"),"accel");hold(document.querySelector("#brake"),"brake");
+document.querySelector("#boost").onclick=()=>{socket.emit("input",{...input,boost:true});beep(150,.15)};
+addEventListener("keydown",e=>{const m={w:"accel",s:"brake",a:"left",d:"right",ArrowUp:"accel",ArrowDown:"brake",ArrowLeft:"left",ArrowRight:"right"};if(m[e.key])input[m[e.key]]=true;if(e.key===" ")document.querySelector("#boost").click()});
+addEventListener("keyup",e=>{const m={w:"accel",s:"brake",a:"left",d:"right",ArrowUp:"accel",ArrowDown:"brake",ArrowLeft:"left",ArrowRight:"right"};if(m[e.key])input[m[e.key]]=false});
+addEventListener("resize",()=>{camera.aspect=innerWidth/innerHeight;camera.updateProjectionMatrix();renderer.setSize(innerWidth,innerHeight)});
+
+function mini(){
+ const m=document.querySelector("#mini"),x=m.getContext("2d");x.clearRect(0,0,300,170);x.fillStyle="#20252b";x.fillRect(0,0,300,170);
+ x.fillStyle="#666";x.fillRect(22,15,256,140);x.fillStyle="#ff4b4b";x.fillRect(22,15,18,140);x.fillRect(260,15,18,140);
+ if(state?.players)state.players.forEach(p=>{x.fillStyle=p.slot===0?"#2388ff":"#ff4242";const px=150+p.x*4,py=85+p.z*3;x.beginPath();x.arc(px,py,7,0,7);x.fill()});
+}
+function animate(){
+ requestAnimationFrame(animate);
+ if(state?.players){
+  state.players.forEach(p=>{const c=cars[p.slot];c.position.x+=(p.x-c.position.x)*.32;c.position.z+=(p.z-c.position.z)*.32;c.rotation.y=p.angle});
+  const me=state.players.find(p=>p.slot===mySlot);
+  if(me){const c=cars[mySlot];camera.position.set(c.position.x,c.position.y+1.58,c.position.z);camera.rotation.set(0,c.rotation.y,0);camera.translateZ(-.35);
+   const speed=Math.round(Math.hypot(me.vx,me.vz)*30);document.querySelector("#speed").textContent=speed+" KM/H";
+   const dmg=Math.max(0,100-Math.min(100,Math.abs(me.x)*2.0));document.querySelector("#damage").style.width=dmg+"%";
+  }
+ }
+ mini();renderer.render(scene,camera);
+}
+animate();
+</script>
+</body>
+</html>
